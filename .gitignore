@@ -1,0 +1,16 @@
+# 依赖包
+node_modules/
+package-lock.json
+
+# 编译输出
+out/
+
+# VS Code 临时文件
+.vscode/
+
+# 环境变量及敏感信息
+.env
+*.log
+
+# Windows 缩略图
+Thumbs.db
