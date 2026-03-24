@@ -1,6 +1,20 @@
 # 智谱 AI (GLM) 用量监控全家桶 🐾
 
+![Preview](./preview.png)
+
 本项目包含一套完整的智谱 AI (GLM) 使用量监控方案，支持 **VS Code 插件** 和 **Claude Code 终端状态栏**。
+
+---
+
+## 📺 效果展示
+
+### 🖥️ Claude Code 终端三行显示 (仿真效果)
+```text
+🤖 Claude 3.5 Sonnet │ 📂 f:\zhipu
+GLM │ Sess:0 │ Day:1.2k │ Mon:15.6k
+5H ██████░░░░62% │ MCP ██░░░░░░27% │ ⏳ 0h45m
+```
+> *注：倒计时会根据剩余时间自动变色：🟢 >3h | 🟡 1-3h | 🔴 <1h*
 
 ---
 
