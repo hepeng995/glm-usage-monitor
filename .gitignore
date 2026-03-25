@@ -4,7 +4,6 @@ package-lock.json
 
 # 编译输出
 out/
-*.vsix
 
 # VS Code 临时文件
 .vscode/
