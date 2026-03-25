@@ -1,20 +1,22 @@
 # 智谱用量监控 (Zhipu Usage Monitor) 🚀
 
-![Version](https://img.shields.io/badge/version-0.4.4-blue.svg)
+![Version](https://img.shields.io/badge/version-0.4.5-blue.svg)
 ![VS Code](https://img.shields.io/badge/vscode-^1.85.0-brightgreen.svg)
 
 **智谱用量监控** 是一款专为开发者设计的 VS Code 插件，旨在实时追踪 智谱AI（BigModel.cn） 的各项 API 配额与限额。无论您使用的是老套餐还是全新的 **GLM Coding Plan**，本插件都能为您提供精准、优雅的用量监控体验。
 
 ---
 
-## ✨ v0.4.4 新特性
+## ✨ v0.4.5 新特性
 
-- **界面极简优化**：移除了看板中冗余的“自动刷新监控中”说明文字。
-- **数值样式统一**：重置倒计时的显示样式与 Token 数值完全对齐，界面整体感更强。
+- **术语严谨性优化**：将看板中的“具身工具”更名为“工具调用”，并更换为更贴切的 `🔍` 图标，符合 API 专业定义。
 
 ---
 
-## 📅 v0.4.3 历史更新
+## 📅 v0.4.4 历史更新
+
+- **界面极简优化**：移除了看板中冗余的“自动刷新监控中”文字。
+- **数值样式统一**：重置倒计时与 Token 数值样式完全对齐。
 
 - **“双子舱”垂直对齐**：重构了看板 Hero Section 布局。
 - **布局一致性**：统一了关键指标的组件结构。

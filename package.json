@@ -2,7 +2,7 @@
   "name": "zhipu-usage-monitor",
   "displayName": "智谱用量监控",
   "description": "在VSCode状态栏实时监控智谱AI（BigModel.cn）5小时Token配额及周限额使用情况，支持新老套餐和多API Key管理",
-  "version": "0.4.4",
+  "version": "0.4.5",
   "publisher": "zhipu-dev",
   "engines": {
     "vscode": "^1.85.0"

@@ -476,7 +476,7 @@ export class WebviewManager {
                 html+='<div class="card-cell full"><div class="cd-label">📦 MCP 月度资源池</div><div class="cd-val">'+mp+'%</div><div class="cd-sub">已用 '+fmt(d.mcpCurrentValue)+' / 总量 '+fmt(d.mcpTotal)+'</div><div class="progress-track"><div class="progress-bar" data-width="'+mp+'%" style="width:0; background:'+cM.hex+'"></div></div></div>';
             }
             html+='<div class="card-cell"><div class="cd-label">🤖 模型调用 (24h)</div><div class="cd-val">'+fmt(d.modelCallCount)+'</div><div class="cd-sub">消耗 Token: '+fmt(d.modelTokensUsage)+'</div></div>';
-            html+='<div class="card-cell"><div class="cd-label">🌍 具身工具 (24h)</div><div class="cd-val">'+fmt(d.networkSearchCount+d.webReadCount)+'</div><div class="cd-sub">搜索 '+fmt(d.networkSearchCount)+' | 抓取 '+fmt(d.webReadCount)+'</div></div>';
+            html+='<div class="card-cell"><div class="cd-label">🔍 工具调用 (24h)</div><div class="cd-val">'+fmt(d.networkSearchCount+d.webReadCount)+'</div><div class="cd-sub">搜索 '+fmt(d.networkSearchCount)+' | 抓取 '+fmt(d.webReadCount)+'</div></div>';
             html += '</div></div>';
             setTimeout(() => {
                 const fg = document.querySelector('#result-'+d._keyName+' .ring-fg');
