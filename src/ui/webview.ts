@@ -4,20 +4,28 @@
  * 合并了API Key管理和用量数据展示：
  * - 顶部：多API Key输入管理（添加/删除/切换）
  * - 点击"查询"按钮后，下方显示该Key的完整额度信息（圆形进度环+数据卡片）
+ *
+ * 安全设计：
+ * - API Key 不暴露到 HTML/JS 中，查询时仅传 name 到扩展侧，由扩展侧查找 Key 发起请求
+ * - 使用 data-* 属性 + 事件委托替代内联 onclick，防止 XSS
+ * - 增量 DOM 更新替代全量重建，查询结果不丢失
  */
 
 import * as vscode from 'vscode';
 import { fetchUsageData } from '../api/client';
-import type { UsageData } from '../api/types';
+import type { UsageData, ApiKeyItem } from '../api/types';
 
-/** 存储在配置中的API Key项 */
-export interface ApiKeyItem {
-    name: string;
-    key: string;
+/** 查询缓存项 */
+interface CacheEntry {
+    data: UsageData;
+    timestamp: number;
 }
+
+const CACHE_TTL_MS = 30_000; // 30秒缓存
 
 export class WebviewManager {
     private panel: vscode.WebviewPanel | undefined;
+    private queryCache = new Map<string, CacheEntry>();
 
     /**
      * 显示面板（无需传入data，面板自行管理查询）
@@ -32,7 +40,7 @@ export class WebviewManager {
             'zhipuUsage',
             '智谱用量监控',
             vscode.ViewColumn.One,
-            { enableScripts: true, retainContextWhenHidden: true }
+            { enableScripts: true }
         );
 
         this.panel.webview.html = this.getHtml();
@@ -47,7 +55,8 @@ export class WebviewManager {
                     await this.handleRemoveKey(msg.name);
                     break;
                 case 'queryKey':
-                    await this.handleQueryKey(msg.key, msg.name);
+                    // 安全：Webview 只传 name，由扩展侧的 handleQueryKey 查找 Key
+                    await this.handleQueryKey(msg.name);
                     break;
                 case 'setActive':
                     await this.handleSetActive(msg.name);
@@ -61,12 +70,11 @@ export class WebviewManager {
     }
 
     /**
-     * 外部刷新时更新面板（重新渲染Key列表）
+     * 外部刷新时更新面板（通过消息增量更新Key列表）
      */
     updateIfVisible(_data?: UsageData): void {
-        // 统一面板由用户点击查询驱动，外部刷新仅更新列表
         if (this.panel) {
-            this.panel.webview.html = this.getHtml();
+            this.sendKeyList();
         }
     }
 
@@ -92,7 +100,7 @@ export class WebviewManager {
         if (keys.length === 1) {
             await config.update('activeKeyName', name, vscode.ConfigurationTarget.Global);
         }
-        this.refreshPanel();
+        this.sendKeyList();
         this.post({ command: 'toast', type: 'success', text: `已添加 "${name}"` });
     }
 
@@ -104,13 +112,34 @@ export class WebviewManager {
         if (activeName === name) {
             await config.update('activeKeyName', keys[0]?.name || '', vscode.ConfigurationTarget.Global);
         }
-        this.refreshPanel();
+        this.queryCache.delete(name);
+        this.sendKeyList();
     }
 
-    private async handleQueryKey(apiKey: string, name: string): Promise<void> {
+    /**
+     * 安全版查询：仅接收 name，由扩展侧查找 Key
+     */
+    private async handleQueryKey(name: string): Promise<void> {
+        // 检查缓存
+        const cached = this.queryCache.get(name);
+        if (cached && (Date.now() - cached.timestamp) < CACHE_TTL_MS) {
+            this.post({ command: 'queryResult', name, data: cached.data });
+            return;
+        }
+
+        // 根据 name 查找 API Key
+        const keys = this.getKeys();
+        const keyItem = keys.find(k => k.name === name);
+        if (!keyItem) {
+            this.post({ command: 'queryError', name, text: `未找到 Key "${name}"` });
+            return;
+        }
+
         this.post({ command: 'queryStart', name });
         try {
-            const data = await fetchUsageData(apiKey);
+            const data = await fetchUsageData(keyItem.key);
+            // 写入缓存
+            this.queryCache.set(name, { data, timestamp: Date.now() });
             this.post({ command: 'queryResult', name, data });
         } catch (err) {
             const msg = err instanceof Error ? err.message : '查询失败';
@@ -121,7 +150,7 @@ export class WebviewManager {
     private async handleSetActive(name: string): Promise<void> {
         const config = vscode.workspace.getConfiguration('zhipu');
         await config.update('activeKeyName', name, vscode.ConfigurationTarget.Global);
-        this.refreshPanel();
+        this.sendKeyList();
         vscode.commands.executeCommand('zhipu.refreshUsage');
     }
 
@@ -129,10 +158,19 @@ export class WebviewManager {
         this.panel?.webview.postMessage(msg);
     }
 
-    private refreshPanel(): void {
-        if (this.panel) {
-            this.panel.webview.html = this.getHtml();
-        }
+    /**
+     * 增量更新：通过消息发送 Key 列表数据，由 Webview 侧渲染
+     * 替代原来的全量 HTML 重建
+     */
+    private sendKeyList(): void {
+        const keys = this.getKeys();
+        const activeName = this.getActiveName();
+        const safeKeys = keys.map(k => ({
+            name: k.name,
+            maskedKey: this.maskKey(k.key),
+            isActive: k.name === activeName
+        }));
+        this.post({ command: 'updateKeyList', keys: safeKeys });
     }
 
     // ========== 数据读取 ==========
@@ -151,6 +189,18 @@ export class WebviewManager {
         return `${parts[0].slice(0, 4)}...${parts[1].slice(-4)}`;
     }
 
+    /**
+     * HTML 转义，防止 XSS
+     */
+    private escapeHtml(str: string): string {
+        return str
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
     // ========== HTML生成 ==========
 
     private getKeysHtml(): string {
@@ -163,22 +213,21 @@ export class WebviewManager {
 
         return keys.map(k => {
             const isActive = k.name === activeName;
-            const safeName = k.name.replace(/'/g, "\\'").replace(/"/g, '&quot;');
-            const safeKey = k.key.replace(/'/g, "\\'").replace(/"/g, '&quot;');
+            const escapedName = this.escapeHtml(k.name);
             return `
-            <div class="key-row ${isActive ? 'active' : ''}" id="row-${safeName}">
+            <div class="key-row ${isActive ? 'active' : ''}" data-name="${escapedName}">
                 <div class="key-left">
-                    <span class="key-name">${k.name}</span>
+                    <span class="key-name">${escapedName}</span>
                     ${isActive ? '<span class="badge">当前</span>' : ''}
                     <span class="key-mask">${this.maskKey(k.key)}</span>
                 </div>
                 <div class="key-btns">
-                    ${!isActive ? `<button class="btn btn-sm" onclick="setActive('${safeName}')">设为当前</button>` : ''}
-                    <button class="btn btn-query" onclick="queryKey('${safeName}','${safeKey}')">🔍 查询</button>
-                    <button class="btn btn-del" onclick="removeKey('${safeName}')">✕</button>
+                    ${!isActive ? `<button class="btn btn-sm" data-action="setActive">设为当前</button>` : ''}
+                    <button class="btn btn-query" data-action="queryKey">🔍 查询</button>
+                    <button class="btn btn-del" data-action="removeKey">✕</button>
                 </div>
             </div>
-            <div class="result-area" id="result-${safeName}"></div>`;
+            <div class="result-area" id="result-${escapedName}"></div>`;
         }).join('');
     }
 
@@ -192,8 +241,6 @@ export class WebviewManager {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>智谱用量监控</title>
     <style>
-        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap');
-
         :root {
             --primary: var(--vscode-focusBorder, #007acc);
             --bg: var(--vscode-editor-background);
@@ -210,7 +257,7 @@ export class WebviewManager {
         /* 基础设置 */
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            font-family: var(--vscode-font-family, 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif);
             color: var(--fg);
             background: var(--bg);
             overflow-x: hidden;
@@ -312,8 +359,9 @@ export class WebviewManager {
             gap: 8px;
         }
         .btn:active { transform: scale(0.96); }
+        .btn:disabled { opacity: 0.5; cursor: not-allowed; }
         .btn-primary { background: var(--primary); color: #fff; box-shadow: 0 4px 15px rgba(var(--vscode-focusBorder), 0.25); }
-        .btn-primary:hover { filter: brightness(1.1); transform: translateY(-2px); box-shadow: 0 6px 20px rgba(var(--vscode-focusBorder), 0.35); }
+        .btn-primary:hover:not(:disabled) { filter: brightness(1.1); transform: translateY(-2px); box-shadow: 0 6px 20px rgba(var(--vscode-focusBorder), 0.35); }
 
         /* Key 列表行 */
         .key-row {
@@ -332,7 +380,7 @@ export class WebviewManager {
         .key-left { display: flex; align-items: center; gap: 14px; }
         .key-name { font-weight: 600; font-size: 16px; }
         .badge { background: var(--primary); color: #fff; font-size: 10px; font-weight: 700; padding: 2px 8px; border-radius: 20px; text-transform: uppercase; }
-        .key-mask { opacity: 0.4; font-size: 12px; font-family: 'JetBrains Mono', monospace; }
+        .key-mask { opacity: 0.4; font-size: 12px; font-family: var(--vscode-editor-font-family, monospace); }
 
         /* 看板设计 */
         .dashboard {
@@ -390,6 +438,8 @@ export class WebviewManager {
         .toast.success { background: rgba(46, 160, 67, 0.85); box-shadow: 0 8px 20px rgba(46, 160, 67, 0.2); }
         .toast.error { background: rgba(248, 81, 73, 0.85); box-shadow: 0 8px 20px rgba(248, 81, 73, 0.2); }
 
+        .empty-state { text-align: center; padding: 40px; opacity: 0.5; font-size: 14px; }
+
         @keyframes fadeInDown { from { opacity: 0; transform: translateY(-20px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes slideUp { from { opacity: 0; transform: translateY(15px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes expandIn { from { opacity: 0; transform: scale(0.98); } to { opacity: 1; transform: scale(1); } }
@@ -408,7 +458,7 @@ export class WebviewManager {
             <div class="input-group">
                 <input id="iName" placeholder="标识名称 (例: 研发)" autocomplete="off" />
                 <input id="iKey" placeholder="API Key (id.secret)" type="password" autocomplete="off" />
-                <button class="btn btn-primary" onclick="addKey()">✚ 绑定</button>
+                <button class="btn btn-primary" id="btnAdd">✚ 绑定</button>
             </div>
         </div>
         <div id="keyList">
@@ -421,103 +471,191 @@ export class WebviewManager {
     <script>
         const vscode = acquireVsCodeApi();
         const CIRC = ${circumference.toFixed(2)};
+
+        // ===== 安全：事件委托代替内联 onclick =====
+        document.getElementById('btnAdd').addEventListener('click', addKey);
+        document.getElementById('iKey').addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') addKey();
+        });
+        document.getElementById('iName').addEventListener('keydown', function(e) {
+            if (e.key === 'Enter') document.getElementById('iKey').focus();
+        });
+
+        // 事件委托：所有 key-row 按钮操作
+        document.getElementById('keyList').addEventListener('click', function(e) {
+            const btn = e.target.closest('[data-action]');
+            if (!btn) return;
+            const row = btn.closest('.key-row');
+            if (!row) return;
+            const name = row.dataset.name;
+            const action = btn.dataset.action;
+            if (action === 'queryKey') {
+                // 安全：只传 name，不传 key
+                btn.disabled = true;
+                btn.textContent = '⏳ 查询中...';
+                vscode.postMessage({ command: 'queryKey', name: name });
+            } else if (action === 'setActive') {
+                vscode.postMessage({ command: 'setActive', name: name });
+            } else if (action === 'removeKey') {
+                vscode.postMessage({ command: 'removeKey', name: name });
+            }
+        });
+
         function addKey() {
             const n = document.getElementById('iName').value.trim();
             const k = document.getElementById('iKey').value.trim();
-            if (!n || !k) { toast('请填写名称和Key','error'); return; }
-            vscode.postMessage({ command:'addKey', name:n, key:k });
+            if (!n || !k) { toast('请填写名称和Key', 'error'); return; }
+            vscode.postMessage({ command: 'addKey', name: n, key: k });
             document.getElementById('iName').value = '';
             document.getElementById('iKey').value = '';
         }
-        function removeKey(n) { vscode.postMessage({ command:'removeKey', name:n }); }
-        function queryKey(n,k) { vscode.postMessage({ command:'queryKey', name:n, key:k }); }
-        function setActive(n) { vscode.postMessage({ command:'setActive', name:n }); }
-        function fmt(n){ return (n===undefined||n===null)?'-':Number(n).toLocaleString('en-US'); }
-        function getColorInfo(p){ 
-            if(p >= 85) return { hex: '#f85149', rgb: '248,81,73' };
-            if(p >= 60) return { hex: '#dbab09', rgb: '219,171,9' };
+
+        function fmt(n) { return (n === undefined || n === null) ? '-' : Number(n).toLocaleString('en-US'); }
+        function getColorInfo(p) {
+            if (p >= 85) return { hex: '#f85149', rgb: '248,81,73' };
+            if (p >= 60) return { hex: '#dbab09', rgb: '219,171,9' };
             return { hex: '#2ea043', rgb: '46,160,67' };
         }
-        function resetTxt(ts){
-            if(!ts) return '未知';
-            var d=ts-Date.now();
-            if(d<=0) return '即将重置...';
-            return Math.floor(d/3600000)+'小时 '+Math.floor((d%3600000)/60000)+'分';
+        function resetTxt(ts) {
+            if (!ts) return '未知';
+            var d = ts - Date.now();
+            if (d <= 0) return '即将重置...';
+            return Math.floor(d / 3600000) + '小时 ' + Math.floor((d % 3600000) / 60000) + '分';
         }
-        function toast(text,type){
-            var old=document.querySelector('.toast'); if(old) old.remove();
-            var el=document.createElement('div');
-            el.className='toast '+type; 
-            el.innerHTML = (type === 'success' ? '✅ ' : '❌ ') + text;
+        function toast(text, type) {
+            var old = document.querySelector('.toast'); if (old) old.remove();
+            var el = document.createElement('div');
+            el.className = 'toast ' + type;
+            el.textContent = (type === 'success' ? '✅ ' : '❌ ') + text;
             document.body.appendChild(el);
-            setTimeout(() => el.remove(), 3000);
+            setTimeout(function() { el.remove(); }, 3000);
         }
+        function esc(s) {
+            var d = document.createElement('div');
+            d.textContent = s;
+            return d.innerHTML;
+        }
+
+        // ===== 增量更新 Key 列表（不丢失查询结果） =====
+        function renderKeyList(keys) {
+            var container = document.getElementById('keyList');
+            if (!keys || keys.length === 0) {
+                container.innerHTML = '<div class="empty-state">暂无 API Key，请在上方添加 ✨</div>';
+                return;
+            }
+            // 保存现有查询结果
+            var savedResults = {};
+            container.querySelectorAll('.result-area').forEach(function(el) {
+                if (el.innerHTML.trim()) {
+                    savedResults[el.id] = el.innerHTML;
+                }
+            });
+            var html = '';
+            keys.forEach(function(k) {
+                var name = esc(k.name);
+                html += '<div class="key-row ' + (k.isActive ? 'active' : '') + '" data-name="' + name + '">';
+                html += '<div class="key-left"><span class="key-name">' + name + '</span>';
+                if (k.isActive) html += '<span class="badge">当前</span>';
+                html += '<span class="key-mask">' + esc(k.maskedKey) + '</span></div>';
+                html += '<div class="key-btns">';
+                if (!k.isActive) html += '<button class="btn btn-sm" data-action="setActive">设为当前</button>';
+                html += '<button class="btn btn-query" data-action="queryKey">🔍 查询</button>';
+                html += '<button class="btn btn-del" data-action="removeKey">✕</button>';
+                html += '</div></div>';
+                html += '<div class="result-area" id="result-' + name + '"></div>';
+            });
+            container.innerHTML = html;
+            // 恢复查询结果
+            Object.keys(savedResults).forEach(function(id) {
+                var el = document.getElementById(id);
+                if (el) el.innerHTML = savedResults[id];
+            });
+            // 动画延迟
+            container.querySelectorAll('.key-row').forEach(function(row, idx) {
+                row.style.animationDelay = (0.1 + idx * 0.08) + 's';
+            });
+        }
+
         function buildDashboard(d) {
-            var p = Math.round(d.tokenPercentage||0);
+            var p = Math.round(d.tokenPercentage || 0);
             var colorObj = getColorInfo(p);
-            var offset = CIRC * (1 - p/100);
+            var offset = CIRC * (1 - p / 100);
             var plan = d.planLevel ? d.planLevel.toUpperCase() : 'STANDARD';
-            var html = '<div class="dashboard" style="--ring-color: '+colorObj.hex+'">';
-            html += '<div class="dash-top"><h3>📊 资源看板 <span class="plan-pill">'+plan+'</span></h3><div class="dash-update">最新同步: '+d.queryTime+'</div></div>';
+            var html = '<div class="dashboard" style="--ring-color: ' + colorObj.hex + '">';
+            html += '<div class="dash-top"><h3>📊 资源看板 <span class="plan-pill">' + plan + '</span></h3><div class="dash-update">最新同步: ' + esc(d.queryTime) + '</div></div>';
             html += '<div class="hero-stats"><div class="ring-wrapper">';
-            html += '<svg class="ring-svg" width="160" height="160"><circle class="ring-circle ring-bg" cx="80" cy="80" r="68"/><circle class="ring-circle ring-fg" cx="80" cy="80" r="68" stroke="'+colorObj.hex+'" stroke-dasharray="'+CIRC+'" stroke-dashoffset="'+CIRC+'"/></svg>';
-            html += '<div class="ring-content"><div class="ring-val" style="color:'+colorObj.hex+'">'+p+'%</div><div class="ring-label">5h 配额</div></div></div>';
+            html += '<svg class="ring-svg" width="160" height="160"><circle class="ring-circle ring-bg" cx="80" cy="80" r="68"/><circle class="ring-circle ring-fg" cx="80" cy="80" r="68" stroke="' + colorObj.hex + '" stroke-dasharray="' + CIRC + '" stroke-dashoffset="' + CIRC + '"/></svg>';
+            html += '<div class="ring-content"><div class="ring-val" style="color:' + colorObj.hex + '">' + p + '%</div><div class="ring-label">5h 配额</div></div></div>';
             html += '<div style="flex:1; display:flex; flex-direction:column; gap:20px; padding-left:24px; border-left:1px solid rgba(255,255,255,0.05);">';
-            html += '<div><div class="cd-label">已用 Token</div><div class="cd-val">'+fmt(d.tokenUsed)+'</div><div class="cd-sub">配额上限 '+fmt(d.tokenTotal)+'</div></div>';
-            html += '<div><div class="cd-label">⏳ 下次重置倒计时</div><div class="cd-val">'+resetTxt(d.nextResetTime)+'</div></div>';
+            html += '<div><div class="cd-label">已用 Token</div><div class="cd-val">' + fmt(d.tokenUsed) + '</div><div class="cd-sub">配额上限 ' + fmt(d.tokenTotal) + '</div></div>';
+            html += '<div><div class="cd-label">⏳ 下次重置倒计时</div><div class="cd-val">' + resetTxt(d.nextResetTime) + '</div></div>';
             html += '</div></div>';
             html += '<div class="metrics-grid">';
-            if(d.weeklyPercentage!==undefined){
-                var wp=Math.round(d.weeklyPercentage); var cW=getColorInfo(wp);
-                html+='<div class="card-cell full"><div class="cd-label">📅 周限额周期</div><div class="cd-val">'+wp+'%</div><div class="cd-sub">周重置倒计时: '+resetTxt(d.weeklyNextResetTime)+'</div><div class="progress-track"><div class="progress-bar" data-width="'+wp+'%" style="width:0; background:'+cW.hex+'"></div></div></div>';
+            if (d.weeklyPercentage !== undefined) {
+                var wp = Math.round(d.weeklyPercentage); var cW = getColorInfo(wp);
+                html += '<div class="card-cell full"><div class="cd-label">📅 周限额周期</div><div class="cd-val">' + wp + '%</div><div class="cd-sub">周重置倒计时: ' + resetTxt(d.weeklyNextResetTime) + '</div><div class="progress-track"><div class="progress-bar" data-width="' + wp + '%" style="width:0; background:' + cW.hex + '"></div></div></div>';
             }
-            if(d.mcpPercentage!==undefined){
-                var mp=Math.round(d.mcpPercentage); var cM=getColorInfo(mp);
-                html+='<div class="card-cell full"><div class="cd-label">📦 MCP 月度资源池</div><div class="cd-val">'+mp+'%</div><div class="cd-sub">已用 '+fmt(d.mcpCurrentValue)+' / 总量 '+fmt(d.mcpTotal)+'</div><div class="progress-track"><div class="progress-bar" data-width="'+mp+'%" style="width:0; background:'+cM.hex+'"></div></div></div>';
+            if (d.mcpPercentage !== undefined) {
+                var mp = Math.round(d.mcpPercentage); var cM = getColorInfo(mp);
+                html += '<div class="card-cell full"><div class="cd-label">📦 MCP 月度资源池</div><div class="cd-val">' + mp + '%</div><div class="cd-sub">已用 ' + fmt(d.mcpCurrentValue) + ' / 总量 ' + fmt(d.mcpTotal) + '</div><div class="progress-track"><div class="progress-bar" data-width="' + mp + '%" style="width:0; background:' + cM.hex + '"></div></div></div>';
             }
-            html+='<div class="card-cell"><div class="cd-label">🤖 模型调用 (24h)</div><div class="cd-val">'+fmt(d.modelCallCount)+'</div><div class="cd-sub">消耗 Token: '+fmt(d.modelTokensUsage)+'</div></div>';
-            html+='<div class="card-cell"><div class="cd-label">🔍 工具调用 (24h)</div><div class="cd-val">'+fmt(d.networkSearchCount+d.webReadCount)+'</div><div class="cd-sub">搜索 '+fmt(d.networkSearchCount)+' | 抓取 '+fmt(d.webReadCount)+'</div></div>';
+            html += '<div class="card-cell"><div class="cd-label">🤖 模型调用 (24h)</div><div class="cd-val">' + fmt(d.modelCallCount) + '</div><div class="cd-sub">消耗 Token: ' + fmt(d.modelTokensUsage) + '</div></div>';
+            html += '<div class="card-cell"><div class="cd-label">🔍 工具调用 (24h)</div><div class="cd-val">' + fmt(d.networkSearchCount + d.webReadCount) + '</div><div class="cd-sub">搜索 ' + fmt(d.networkSearchCount) + ' | 抓取 ' + fmt(d.webReadCount) + '</div></div>';
             html += '</div></div>';
-            setTimeout(() => {
-                const fg = document.querySelector('#result-'+d._keyName+' .ring-fg');
-                if(fg) fg.style.strokeDashoffset = offset;
-                const pbars = document.querySelectorAll('#result-'+d._keyName+' .progress-bar');
-                pbars.forEach(b => { if(b.dataset.width) b.style.width = b.dataset.width; });
-            }, 50);
-            return html;
+            return { html: html, offset: offset };
         }
-        window.addEventListener('message', function(e){
-            const msg = e.data;
-            if(msg.command==='queryStart'){
-                const el = document.getElementById('result-'+msg.name);
-                if(el) {
+
+        window.addEventListener('message', function(e) {
+            var msg = e.data;
+            if (msg.command === 'updateKeyList') {
+                renderKeyList(msg.keys);
+            }
+            if (msg.command === 'queryStart') {
+                var el = document.getElementById('result-' + msg.name);
+                if (el) {
                     el.style.maxHeight = '500px';
-                    el.innerHTML='<div class="result-loading"><div class="spinner"></div>正在分析 "'+msg.name+'" 的调用指纹...</div>';
+                    el.innerHTML = '<div class="result-loading"><div class="spinner"></div>正在分析 "' + esc(msg.name) + '" 的调用指纹...</div>';
                 }
             }
-            if(msg.command==='queryResult'){
-                const el = document.getElementById('result-'+msg.name);
-                if(el) {
-                    msg.data._keyName = msg.name;
-                    el.innerHTML = buildDashboard(msg.data);
+            if (msg.command === 'queryResult') {
+                var el = document.getElementById('result-' + msg.name);
+                if (el) {
+                    var result = buildDashboard(msg.data);
+                    el.innerHTML = result.html;
                     el.style.maxHeight = '1500px';
+                    // 延迟触发动画
+                    setTimeout(function() {
+                        var fg = el.querySelector('.ring-fg');
+                        if (fg) fg.style.strokeDashoffset = result.offset;
+                        el.querySelectorAll('.progress-bar').forEach(function(b) {
+                            if (b.dataset.width) b.style.width = b.dataset.width;
+                        });
+                    }, 50);
                 }
+                // 恢复查询按钮
+                restoreQueryBtn(msg.name);
             }
-            if(msg.command==='queryError'){
-                const el = document.getElementById('result-'+msg.name);
-                if(el) {
-                    el.innerHTML='<div class="result-error">⚠️ '+msg.text+'</div>';
+            if (msg.command === 'queryError') {
+                var el = document.getElementById('result-' + msg.name);
+                if (el) {
+                    el.innerHTML = '<div class="result-error">⚠️ ' + esc(msg.text) + '</div>';
                     el.style.maxHeight = '200px';
                 }
+                restoreQueryBtn(msg.name);
             }
-            if(msg.command==='toast') toast(msg.text, msg.type);
+            if (msg.command === 'toast') toast(msg.text, msg.type);
         });
 
-        document.getElementById('iKey').addEventListener('keydown',function(e){
-            if(e.key==='Enter') addKey();
-        });
-        
-        document.querySelectorAll('.key-row').forEach((row, idx) => {
+        function restoreQueryBtn(name) {
+            var row = document.querySelector('.key-row[data-name="' + name + '"]');
+            if (row) {
+                var btn = row.querySelector('[data-action="queryKey"]');
+                if (btn) { btn.disabled = false; btn.textContent = '🔍 查询'; }
+            }
+        }
+
+        // 初始化动画延迟
+        document.querySelectorAll('.key-row').forEach(function(row, idx) {
             row.style.animationDelay = (0.2 + idx * 0.1) + 's';
         });
     </script>

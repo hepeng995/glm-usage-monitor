@@ -88,3 +88,9 @@ export interface UsageData {
     /** 查询时间 */
     queryTime: string;
 }
+
+/** API Key 配置项 */
+export interface ApiKeyItem {
+    name: string;
+    key: string;
+}

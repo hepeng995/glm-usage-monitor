@@ -33,6 +33,11 @@ const DEFAULT_TOKEN_LIMIT = 40_000_000;
 function httpGet<T>(path: string, apiKey: string): Promise<T> {
     return new Promise((resolve, reject) => {
         const url = new URL(BASE_URL + path);
+        let settled = false;
+
+        const settle = (fn: () => void) => {
+            if (!settled) { settled = true; fn(); }
+        };
 
         const options: https.RequestOptions = {
             hostname: url.hostname,
@@ -51,13 +56,13 @@ function httpGet<T>(path: string, apiKey: string): Promise<T> {
             res.on('data', (chunk) => { data += chunk; });
             res.on('end', () => {
                 if (res.statusCode !== 200) {
-                    reject(new Error(`API请求失败 (${res.statusCode}): ${data.substring(0, 200)}`));
+                    settle(() => reject(new Error(`API请求失败 (${res.statusCode}): ${data.substring(0, 200)}`)));
                     return;
                 }
                 try {
-                    resolve(JSON.parse(data) as T);
+                    settle(() => resolve(JSON.parse(data) as T));
                 } catch {
-                    reject(new Error(`JSON解析失败: ${data.substring(0, 200)}`));
+                    settle(() => reject(new Error(`JSON解析失败: ${data.substring(0, 200)}`)));
                 }
             });
         });
@@ -65,9 +70,9 @@ function httpGet<T>(path: string, apiKey: string): Promise<T> {
         req.setTimeout(REQUEST_TIMEOUT_MS);
         req.on('timeout', () => {
             req.destroy();
-            reject(new Error('请求超时'));
+            settle(() => reject(new Error('请求超时')));
         });
-        req.on('error', (err) => reject(new Error(`网络错误: ${err.message}`)));
+        req.on('error', (err) => settle(() => reject(new Error(`网络错误: ${err.message}`))));
         req.end();
     });
 }

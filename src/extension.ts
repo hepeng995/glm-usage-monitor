@@ -13,12 +13,7 @@ import * as vscode from 'vscode';
 import { fetchUsageData } from './api/client';
 import { StatusBarManager } from './ui/statusBar';
 import { WebviewManager } from './ui/webview';
-import type { UsageData } from './api/types';
-
-interface ApiKeyItem {
-    name: string;
-    key: string;
-}
+import type { UsageData, ApiKeyItem } from './api/types';
 
 let statusBar: StatusBarManager;
 let webview: WebviewManager;
