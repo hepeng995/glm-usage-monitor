@@ -3,9 +3,10 @@
  *
  * 功能:
  * 1. 状态栏实时显示5小时Token配额使用率
- * 2. 点击状态栏弹出详细Webview面板
- * 3. 支持手动刷新和自动定时刷新
- * 4. 用量过高时状态栏变色告警
+ * 2. 点击状态栏打开统一面板（Key管理 + 用量看板）
+ * 3. 多API Key管理，支持切换和独立查询
+ * 4. 支持手动刷新和自动定时刷新
+ * 5. 用量过高时状态栏变色告警
  */
 
 import * as vscode from 'vscode';
@@ -14,34 +15,42 @@ import { StatusBarManager } from './ui/statusBar';
 import { WebviewManager } from './ui/webview';
 import type { UsageData } from './api/types';
 
+interface ApiKeyItem {
+    name: string;
+    key: string;
+}
+
 let statusBar: StatusBarManager;
 let webview: WebviewManager;
 let refreshTimer: ReturnType<typeof setInterval> | undefined;
 let lastUsageData: UsageData | undefined;
 
 /**
- * 获取配置的API Key
+ * 获取当前激活的API Key
  */
-function getApiKey(): string {
+function getActiveApiKey(): { name: string; key: string } | undefined {
     const config = vscode.workspace.getConfiguration('zhipu');
-    return config.get<string>('apiKey', '');
+    const keys = config.get<ApiKeyItem[]>('apiKeys') || [];
+    const activeName = config.get<string>('activeKeyName', '');
+
+    if (keys.length === 0) { return undefined; }
+    if (!activeName) { return keys[0]; }
+    return keys.find(k => k.name === activeName) || keys[0];
 }
 
 /**
  * 获取刷新间隔（分钟）
  */
 function getRefreshInterval(): number {
-    const config = vscode.workspace.getConfiguration('zhipu');
-    return config.get<number>('refreshInterval', 5);
+    return vscode.workspace.getConfiguration('zhipu').get<number>('refreshInterval', 5);
 }
 
 /**
- * 刷新用量数据
+ * 刷新用量数据（状态栏用）
  */
 async function refreshUsage(): Promise<void> {
-    const apiKey = getApiKey();
-
-    if (!apiKey) {
+    const active = getActiveApiKey();
+    if (!active) {
         statusBar.showNoApiKey();
         return;
     }
@@ -49,35 +58,21 @@ async function refreshUsage(): Promise<void> {
     statusBar.showLoading();
 
     try {
-        lastUsageData = await fetchUsageData(apiKey);
-        statusBar.update(lastUsageData);
-        webview.updateIfVisible(lastUsageData);
+        lastUsageData = await fetchUsageData(active.key);
+        statusBar.update(lastUsageData, active.name);
     } catch (err) {
         const msg = err instanceof Error ? err.message : '未知错误';
         statusBar.showError(msg);
-        vscode.window.showErrorMessage(`智谱用量查询失败: ${msg}`);
     }
 }
 
-/**
- * 启动/重启自动刷新定时器
- */
 function startAutoRefresh(): void {
     stopAutoRefresh();
-    const intervalMinutes = getRefreshInterval();
-    refreshTimer = setInterval(() => {
-        refreshUsage();
-    }, intervalMinutes * 60 * 1000);
+    refreshTimer = setInterval(() => refreshUsage(), getRefreshInterval() * 60 * 1000);
 }
 
-/**
- * 停止自动刷新
- */
 function stopAutoRefresh(): void {
-    if (refreshTimer) {
-        clearInterval(refreshTimer);
-        refreshTimer = undefined;
-    }
+    if (refreshTimer) { clearInterval(refreshTimer); refreshTimer = undefined; }
 }
 
 /**
@@ -87,28 +82,18 @@ export function activate(context: vscode.ExtensionContext): void {
     statusBar = new StatusBarManager();
     webview = new WebviewManager();
 
-    // 注册刷新命令
-    const refreshCmd = vscode.commands.registerCommand('zhipu.refreshUsage', () => {
-        refreshUsage();
-    });
+    // 刷新用量
+    const refreshCmd = vscode.commands.registerCommand('zhipu.refreshUsage', () => refreshUsage());
 
-    // 注册查看详情命令
-    const detailsCmd = vscode.commands.registerCommand('zhipu.showDetails', () => {
-        if (lastUsageData) {
-            webview.show(lastUsageData, context.extensionUri);
-        } else {
-            // 没有数据时先刷新再显示
-            refreshUsage().then(() => {
-                if (lastUsageData) {
-                    webview.show(lastUsageData, context.extensionUri);
-                }
-            });
-        }
-    });
+    // 打开统一面板（点击状态栏 或 命令面板）
+    const detailsCmd = vscode.commands.registerCommand('zhipu.showDetails', () => webview.show());
+
+    // API Key管理（也指向同一面板）
+    const manageCmd = vscode.commands.registerCommand('zhipu.manageKeys', () => webview.show());
 
     // 监听配置变化
     const configWatcher = vscode.workspace.onDidChangeConfiguration((e) => {
-        if (e.affectsConfiguration('zhipu.apiKey')) {
+        if (e.affectsConfiguration('zhipu.apiKeys') || e.affectsConfiguration('zhipu.activeKeyName')) {
             refreshUsage();
         }
         if (e.affectsConfiguration('zhipu.refreshInterval')) {
@@ -116,22 +101,14 @@ export function activate(context: vscode.ExtensionContext): void {
         }
     });
 
-    context.subscriptions.push(refreshCmd, detailsCmd, configWatcher, {
-        dispose: () => {
-            stopAutoRefresh();
-            statusBar.dispose();
-            webview.dispose();
-        }
+    context.subscriptions.push(refreshCmd, detailsCmd, manageCmd, configWatcher, {
+        dispose: () => { stopAutoRefresh(); statusBar.dispose(); webview.dispose(); }
     });
 
-    // 初始加载
     refreshUsage();
     startAutoRefresh();
 }
 
-/**
- * 插件停用
- */
 export function deactivate(): void {
     stopAutoRefresh();
 }

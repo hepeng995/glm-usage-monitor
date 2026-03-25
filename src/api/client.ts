@@ -4,6 +4,10 @@
  * 调用智谱监控API获取用量数据
  * 端点基于 https://open.bigmodel.cn
  * 认证方式：Authorization头直接传API Key（无Bearer前缀）
+ * 
+ * 支持新老套餐:
+ *   - 老套餐: 1个 TOKENS_LIMIT (unit=3, 5小时)
+ *   - 新套餐(Coding Plan): 2个 TOKENS_LIMIT (unit=3 五小时 + unit=6 周限额)
  */
 
 import * as https from 'https';
@@ -113,6 +117,8 @@ export async function fetchUsageData(apiKey: string): Promise<UsageData> {
     let tokenTotal = DEFAULT_TOKEN_LIMIT;
     let tokenUsed = 0;
     let nextResetTime: number | undefined;
+    let weeklyPercentage: number | undefined;
+    let weeklyNextResetTime: number | undefined;
     let mcpPercentage: number | undefined;
     let mcpCurrentValue: number | undefined;
     let mcpTotal: number | undefined;
@@ -124,10 +130,17 @@ export async function fetchUsageData(apiKey: string): Promise<UsageData> {
 
         for (const limit of limits) {
             if (limit.type === 'TOKENS_LIMIT') {
-                tokenPercentage = limit.percentage || 0;
-                tokenTotal = limit.total || limit.usage || DEFAULT_TOKEN_LIMIT;
-                tokenUsed = Math.round(tokenTotal * tokenPercentage / 100);
-                nextResetTime = limit.nextResetTime;
+                if (limit.unit === 6) {
+                    // 周限额（新套餐 Coding Plan 独有，unit=6 代表"周"）
+                    weeklyPercentage = limit.percentage || 0;
+                    weeklyNextResetTime = limit.nextResetTime;
+                } else {
+                    // 5小时滚动窗口（unit=3 代表"小时"，兼容无 unit 的老格式）
+                    tokenPercentage = limit.percentage || 0;
+                    tokenTotal = limit.total || limit.usage || DEFAULT_TOKEN_LIMIT;
+                    tokenUsed = Math.round(tokenTotal * tokenPercentage / 100);
+                    nextResetTime = limit.nextResetTime;
+                }
             } else if (limit.type === 'TIME_LIMIT') {
                 mcpPercentage = limit.percentage || 0;
                 mcpCurrentValue = limit.currentValue;
@@ -146,6 +159,8 @@ export async function fetchUsageData(apiKey: string): Promise<UsageData> {
         tokenUsed,
         tokenTotal,
         nextResetTime,
+        weeklyPercentage,
+        weeklyNextResetTime,
         mcpPercentage,
         mcpCurrentValue,
         mcpTotal,

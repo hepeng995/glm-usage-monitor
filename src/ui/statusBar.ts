@@ -99,6 +99,21 @@ export class StatusBarManager {
         lines.push('');
         lines.push(`$(clock) 重置倒计时: **${resetText}**`);
 
+        // 周限额（新套餐 Coding Plan 独有）
+        if (data.weeklyPercentage !== undefined) {
+            const wp = Math.round(data.weeklyPercentage);
+            const weekStatusIcon = wp >= 85 ? '🔴' : wp >= 60 ? '🟡' : '🟢';
+            const weekResetText = this.getResetCountdown(data.weeklyNextResetTime);
+            lines.push('');
+            lines.push('---');
+            lines.push('');
+            lines.push(`${weekStatusIcon} **📅 周限额**`);
+            lines.push('');
+            lines.push(`\`${this.makeProgressBar(wp)}\` **${wp}%**`);
+            lines.push('');
+            lines.push(`$(clock) 周重置倒计时: **${weekResetText}**`);
+        }
+
         // MCP月度配额
         if (data.mcpPercentage !== undefined) {
             const mcpPct = Math.round(data.mcpPercentage);
@@ -142,20 +157,28 @@ export class StatusBarManager {
     /**
      * 更新状态栏显示
      */
-    update(data: UsageData): void {
+    update(data: UsageData, keyName?: string): void {
         const pct = Math.round(data.tokenPercentage);
         const used = this.formatNumber(data.tokenUsed);
         const total = this.formatNumber(data.tokenTotal);
+        const nameTag = keyName ? `[${keyName}] ` : '';
 
-        this.statusBarItem.text = `$(cloud) GLM: ${pct}% | ${used}/${total}`;
+        // 如果有周限额，在状态栏也显示
+        let weeklyTag = '';
+        if (data.weeklyPercentage !== undefined) {
+            weeklyTag = ` W:${Math.round(data.weeklyPercentage)}%`;
+        }
+
+        this.statusBarItem.text = `$(cloud) ${nameTag}GLM: ${pct}%${weeklyTag} | ${used}/${total}`;
         this.statusBarItem.tooltip = this.buildTooltip(data);
 
-        // 根据用量百分比设置颜色
-        if (pct >= 85) {
+        // 根据用量百分比设置颜色（取5h和周限额中较高的）
+        const maxPct = Math.max(pct, data.weeklyPercentage ?? 0);
+        if (maxPct >= 85) {
             this.statusBarItem.backgroundColor = new vscode.ThemeColor(
                 'statusBarItem.errorBackground'
             );
-        } else if (pct >= 60) {
+        } else if (maxPct >= 60) {
             this.statusBarItem.backgroundColor = new vscode.ThemeColor(
                 'statusBarItem.warningBackground'
             );

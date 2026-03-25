@@ -59,6 +59,10 @@ export interface UsageData {
     tokenTotal: number;
     /** 下次重置时间（Unix毫秒） */
     nextResetTime?: number;
+    /** 周限额百分比（新套餐独有） */
+    weeklyPercentage?: number;
+    /** 周限额下次重置时间（Unix毫秒） */
+    weeklyNextResetTime?: number;
     /** MCP月度配额百分比 */
     mcpPercentage?: number;
     /** MCP当前值 */

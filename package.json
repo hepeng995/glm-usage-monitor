@@ -1,8 +1,8 @@
 {
   "name": "zhipu-usage-monitor",
   "displayName": "智谱用量监控",
-  "description": "在VSCode状态栏实时监控智谱AI（BigModel.cn）5小时Token配额使用情况",
-  "version": "0.1.0",
+  "description": "在VSCode状态栏实时监控智谱AI（BigModel.cn）5小时Token配额及周限额使用情况，支持新老套餐和多API Key管理",
+  "version": "0.4.4",
   "publisher": "zhipu-dev",
   "engines": {
     "vscode": "^1.85.0"
@@ -24,16 +24,40 @@
       {
         "command": "zhipu.showDetails",
         "title": "智谱: 查看用量详情"
+      },
+      {
+        "command": "zhipu.manageKeys",
+        "title": "智谱: API Key 管理"
       }
     ],
     "configuration": {
       "title": "智谱用量监控",
       "properties": {
-        "zhipu.apiKey": {
+        "zhipu.apiKeys": {
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "API Key 名称"
+              },
+              "key": {
+                "type": "string",
+                "description": "API Key 值"
+              }
+            },
+            "required": ["name", "key"]
+          },
+          "description": "智谱AI API Key列表（每项含 name 和 key 字段）",
+          "order": 1
+        },
+        "zhipu.activeKeyName": {
           "type": "string",
           "default": "",
-          "description": "智谱AI API Key（格式: id.secret）",
-          "order": 1
+          "description": "当前激活的API Key名称（用于状态栏监控）",
+          "order": 2
         },
         "zhipu.refreshInterval": {
           "type": "number",
@@ -41,7 +65,7 @@
           "minimum": 1,
           "maximum": 60,
           "description": "自动刷新间隔（分钟）",
-          "order": 2
+          "order": 3
         }
       }
     }

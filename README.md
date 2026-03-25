@@ -1,60 +1,90 @@
-# 智谱 AI (GLM) 用量监控全家桶 🐾
+# 智谱用量监控 (Zhipu Usage Monitor) 🚀
 
-![Preview](./preview.png)
+![Version](https://img.shields.io/badge/version-0.4.4-blue.svg)
+![VS Code](https://img.shields.io/badge/vscode-^1.85.0-brightgreen.svg)
 
-本项目包含一套完整的智谱 AI (GLM) 使用量监控方案，支持 **VS Code 插件** 和 **Claude Code 终端状态栏**。
-
----
-
-## 📺 效果展示
-
-### 🖥️ Claude Code 终端三行显示 (仿真效果)
-```text
-🤖 Claude 3.5 Sonnet │ 📂 f:\zhipu
-GLM │ Sess:0 │ Day:1.2k │ Mon:15.6k
-5H ██████░░░░62% │ MCP ██░░░░░░27% │ ⏳ 0h45m
-```
-> *注：倒计时会根据剩余时间自动变色：🟢 >3h | 🟡 1-3h | 🔴 <1h*
+**智谱用量监控** 是一款专为开发者设计的 VS Code 插件，旨在实时追踪 智谱AI（BigModel.cn） 的各项 API 配额与限额。无论您使用的是老套餐还是全新的 **GLM Coding Plan**，本插件都能为您提供精准、优雅的用量监控体验。
 
 ---
 
-## 📦 包含组件
+## ✨ v0.4.4 新特性
 
-### 1. VS Code 插件 (Zhipu Usage Monitor)
-- **实时显示**：VS Code 状态栏实时显示 5 小时 Token 使用率。
-- **详细面板**：点击状态栏弹出 Webview 面板，查看 24h 模型调用分布、Token 消耗排行及 MCP 额度。
-- **自动告警**：用量过高时状态栏自动变色提醒。
-
-### 2. Claude Code 终端脚本 (Combined StatusLine)
-- **三行聚合**：专为 Claude Code 设计，在终端底部实时显示上下文、GLM 会话及配额。
-- **实时倒计时**：提供精确的 GLM 5 小时配额重置倒计时 ⏳。
-- **智能变色**：根据重置剩余时间自动切换颜色。
+- **界面极简优化**：移除了看板中冗余的“自动刷新监控中”说明文字。
+- **数值样式统一**：重置倒计时的显示样式与 Token 数值完全对齐，界面整体感更强。
 
 ---
 
-## 🚀 快速安装
+## 📅 v0.4.3 历史更新
 
-### 第一步：VS Code 插件
-1. 下载仓库中的 `zhipu-usage-monitor-0.1.0.vsix`。
-2. 在 VS Code 中点击“扩展” -> “...” -> “从 VSIX 安装”。
-3. 在设置中搜索 `zhipu.apiKey` 并填入你的智谱 API Key。
+- **“双子舱”垂直对齐**：重构了看板 Hero Section 布局。
+- **布局一致性**：统一了关键指标的组件结构。
 
-### 第二步：Claude Code 脚本 (可选)
-1. 确保已安装系统级工具 `ccline` 和 `glm-coding-plan-statusline`。
-2. 将 `combined-statusline.ps1` 放在本地固定位置。
-3. 在 Claude Code 中执行以下配置指令：
-   ```powershell
-   claude config set TUI_STATUSLINE_COMMAND "powershell -NoProfile -ExecutionPolicy Bypass -File <你的绝对路径>\combined-statusline.ps1"
-   ```
+- **“时钟舱”视觉增强**：为“下次重置”增加高亮背景与图标。
+- **样式修正**：修复了看板中部分数据项的 CSS 类名拼写错误。
+
+- **数据看板全面补完**：
+  - 修复周限额重置倒计时显示。
+  - 新增 MCP 月度资源池监控卡片。
+  - 细化模型调用与具身工具统计展示。
 
 ---
 
-## 🛠️ 技术细节
+## 📅 v0.4.0 历史更新
 
-- **API 驱动**：所有组件均直接对接智谱官方查询接口。
-- **配置同步**：终端脚本会自动读取 VS Code 的 API Key 配置，无需重复设置。
-- **兼容性**：完美支持 Windows 终端和编码环境。
+- **🎨 全新“优雅毛玻璃” UI**：Webview 面板全面升级至 Glassmorphism 风格。
+- **⚡ 环形进度条动效**：支持入场动画与用量颜色动态渐变。
+- **🚀 交互增强**：新增多 Key 列表的交错动画及毛玻璃质感 Toast 提示。
 
-## 📜 许可证
+---
 
-MIT | Created with Love 🐾
+## 📅 v0.3.0 历史更新
+
+- **🚀 完美兼容新老套餐**：自动识别 API Key 绑定的套餐类型，支持新老模式。
+- **📅 周限额监控**：针对最新 Coding Plan，新增 **周限额** 追踪。
+- **📊 状态栏增强**：状态栏新增 `W:xx%` 标识。
+
+---
+
+## 🌟 核心功能
+
+- **🌈 状态栏实时显示**：在 VS Code 右下角直观展示 5 小时 Token 配额及周限额百分比。
+- **🎨 智能告警变色**：用量低于 60% 为绿色，超过 60% 变黄，超过 85% 变红并显示警告图标，预防超额。
+- **🔑 多 API Key 管理**：支持保存多个 API Key，可自由切换、重命名、删除，并支持一键查询。
+- **📊 玻璃拟态详情面板**：点击状态栏即可打开精致的 Webview 面板：
+  - **圆形进度环**：动态展示当前阶段的 Token 消耗。
+  - **资源卡片**：展示 Token 已用/总量、重置倒计时。
+  - **MCP 监控**：实时展示 MCP 月度资源池状态。
+  - **24h 统计**：统计过去 24 小时内的模型调用频次、Token 产出、网络搜索及 Web 读取次数。
+- **⏰ 自动/手动刷新**：默认每 5 分钟自动更新数据，亦可点击状态栏或按钮手动刷新。
+
+---
+
+## 📦 安装方法
+
+1. 在 [GitHub Releases](https://github.com/hepeng995/glm-usage-monitor) 页面下载最新的 `.vsix` 文件。
+2. 在 VS Code 中打开扩展面板 (`Ctrl+Shift+X`)。
+3. 点击右上角 `...` 菜单，选择 `Install from VSIX...`。
+
+---
+
+## 🛠️ 快速开始
+
+1. **配置 Key**：
+   - 按下 `Ctrl+Shift+P` (Mac: `Cmd+Shift+P`)。
+   - 输入并选择 `智谱: API Key 管理`。
+   - 输入一个便于记忆的名称和您的 API Key (`id.secret` 格式)。
+2. **开始监控**：
+   - 添加成功后，右下角状态栏将立即显示当前激活 Key 的用量信息。
+   - 点击状态栏直接刷新或查看详情看板。
+
+---
+
+## 📝 提示
+
+- 5 小时 Token 限额通常在达标后重新计算重置时间。
+- 周限额是以您的下单时间起算，每 7 天为一个周期自动刷新。
+- 如果您同时使用 Claude Code 等工具，本插件能帮您有效规划额度使用。
+
+---
+
+**享受丝滑的编码体验，不再为额度焦虑！喵~ 🐾**
